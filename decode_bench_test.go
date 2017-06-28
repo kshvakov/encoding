@@ -2,7 +2,8 @@ package encoding
 
 import (
 	"bytes"
-	"encoding/binary"
+	"encoding/gob"
+	"encoding/json"
 	"testing"
 )
 
@@ -29,70 +30,113 @@ func (b *benchStringReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func Benchmark_DecodeUvarint(b *testing.B) {
-	var buf bytes.Buffer
-	encode := encode{
-		buf: &buf,
-	}
-	encode.uvarint(42)
-	decode := decode{
-		in: &benchReader{
-			buf: buf.Bytes(),
-		},
-		scratch: make([]byte, binary.MaxVarintLen64),
-	}
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		v, err := decode.uvarint()
-		switch {
-		case err != nil:
-			b.Fatal(err)
-		case v != 42:
-			b.Fatal("incorrect result")
+func Benchmark_Decode(b *testing.B) {
+	var buff bytes.Buffer
+	type (
+		In struct {
+			V string
 		}
-	}
-}
-
-func Benchmark_DecodeString(b *testing.B) {
-	var (
-		buf    bytes.Buffer
-		encode = encode{
-			buf: &buf,
+		T struct {
+			Fieldname  string
+			Fieldname2 string
+			UInt32     uint32
+			Uint64     uint64
+			In         In
 		}
 	)
-	encode.string("string")
-	decode := decode{
-		in: &benchStringReader{
-			buf: buf.Bytes(),
+	v := T{
+		Fieldname:  "Abc",
+		Fieldname2: "Bcde",
+		UInt32:     256,
+		Uint64:     542,
+		In: In{
+			V: "AAAAAAAAAAa",
 		},
-		scratch: make([]byte, binary.MaxVarintLen64),
 	}
+	NewEncoder(&buff).Encode(v)
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		v, err := decode.string()
-		switch {
-		case err != nil:
+		var z T
+		if err := NewDecoder(bytes.NewBuffer(buff.Bytes())).Decode(&z); err != nil {
 			b.Fatal(err)
-		case v != "string":
-			b.Fatalf("incorrect result: %v", v)
+		}
+		if z.UInt32 != 256 || z.In.V != "AAAAAAAAAAa" {
+			b.Fatal("invalid value", z)
 		}
 	}
 }
 
-func Benchmark_DecodeUint8(b *testing.B) {
-	decode := decode{
-		in: &benchReader{
-			buf: []byte{42},
+func Benchmark_DecodeGob(b *testing.B) {
+	var buff bytes.Buffer
+	type (
+		In struct {
+			V string
+		}
+		T struct {
+			Fieldname  string
+			Fieldname2 string
+			UInt32     uint32
+			Uint64     uint64
+			In         In
+		}
+	)
+	v := T{
+		Fieldname:  "Abc",
+		Fieldname2: "Bcde",
+		UInt32:     256,
+		Uint64:     542,
+		In: In{
+			V: "AAAAAAAAAAa",
 		},
-		scratch: make([]byte, binary.MaxVarintLen64),
 	}
+	gob.NewEncoder(&buff).Encode(v)
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := decode.uint8(); err != nil {
+		var z T
+		if err := gob.NewDecoder(bytes.NewBuffer(buff.Bytes())).Decode(&z); err != nil {
 			b.Fatal(err)
+		}
+		if z.UInt32 != 256 || z.In.V != "AAAAAAAAAAa" {
+			b.Fatal("invalid value", z)
+		}
+	}
+}
+
+func Benchmark_DecodeJson(b *testing.B) {
+	var buff bytes.Buffer
+	type (
+		In struct {
+			V string
+		}
+		T struct {
+			Fieldname  string
+			Fieldname2 string
+			UInt32     uint32
+			Uint64     uint64
+			In         In
+		}
+	)
+	v := T{
+		Fieldname:  "Abc",
+		Fieldname2: "Bcde",
+		UInt32:     256,
+		Uint64:     542,
+		In: In{
+			V: "AAAAAAAAAAa",
+		},
+	}
+	json.NewEncoder(&buff).Encode(v)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var z T
+		if err := json.NewDecoder(bytes.NewBuffer(buff.Bytes())).Decode(&z); err != nil {
+			b.Fatal(err)
+		}
+		if z.UInt32 != 256 || z.In.V != "AAAAAAAAAAa" {
+			b.Fatal("invalid value", z)
 		}
 	}
 }

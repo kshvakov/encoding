@@ -3,11 +3,49 @@ package encoding
 import (
 	"encoding/binary"
 	"io"
+	"reflect"
 )
 
+func NewDecoder(r io.Reader) *Decoder {
+	return &Decoder{
+		input: r,
+	}
+}
+
+type Decoder struct {
+	input   io.Reader
+	scratch [4]byte
+}
+
+func (d *Decoder) Decode(out interface{}) error {
+	if _, err := io.ReadFull(d.input, d.scratch[:]); err != nil {
+		return err
+	}
+	ln := uint32(d.scratch[0]) | uint32(d.scratch[1])<<8 | uint32(d.scratch[2])<<16 | uint32(d.scratch[3])<<24
+	decode := decodePool.Get().(*decode)
+	decode.free()
+	if cap(decode.block) < int(ln) {
+		decode.block = make([]byte, 0, ln)
+	}
+	decode.block = decode.block[:ln]
+	if _, err := io.ReadFull(d.input, decode.block); err != nil {
+		return err
+	}
+	decodeStruct(decode, reflect.ValueOf(out).Elem())
+	decodePool.Put(decode)
+	return nil
+}
+
 type decode struct {
-	in      io.Reader
-	scratch []byte
+	block   []byte
+	offset  int
+	columns columns
+}
+
+func (decode *decode) free() {
+	decode.block = decode.block[0:0]
+	decode.offset = 0
+	decode.columns = decode.columns[0:0]
 }
 
 func (decode *decode) uvarint() (uint64, error) {
@@ -22,6 +60,22 @@ func (decode *decode) uint8() (uint8, error) {
 	return uint8(byte), nil
 }
 
+func (decode *decode) uint32() (uint32, error) {
+	b, err := decode.readFixed(4)
+	if err != nil {
+		return 0, err
+	}
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24, nil
+}
+
+func (decode *decode) uint64() (uint64, error) {
+	b, err := decode.readFixed(6)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 | uint64(b[3])<<24 | uint64(b[4])<<48 | uint64(b[5])<<56, nil
+}
+
 func (decode *decode) string() (string, error) {
 	strlen, err := decode.uvarint()
 	if err != nil {
@@ -34,19 +88,14 @@ func (decode *decode) string() (string, error) {
 	return string(bytes), nil
 }
 
-func (decode *decode) readFixed(l int) ([]byte, error) {
-	if len(decode.scratch) < l {
-		decode.scratch = make([]byte, 0, l)
-	}
-	if _, err := io.ReadFull(decode.in, decode.scratch[:l]); err != nil {
-		return nil, err
-	}
-	return decode.scratch[:l], nil
+func (decode *decode) readFixed(ln int) ([]byte, error) {
+	idx := decode.offset
+	decode.offset = idx + ln
+	return decode.block[idx : idx+ln], nil
 }
 
 func (decode *decode) ReadByte() (byte, error) {
-	if _, err := io.ReadFull(decode.in, decode.scratch[:1]); err != nil {
-		return 0x0, err
-	}
-	return decode.scratch[0], nil
+	idx := decode.offset
+	decode.offset++
+	return decode.block[idx], nil
 }

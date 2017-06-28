@@ -10,34 +10,62 @@ import (
 func NewEncoder(w io.Writer) *Encoder {
 	return &Encoder{
 		out: w,
+		encode: &encode{
+			buf: newBuffer(1024),
+		},
 	}
 }
 
 type Encoder struct {
-	out io.Writer
+	out    io.Writer
+	encode *encode
 }
 
 func (e *Encoder) Encode(v interface{}) error {
-	encode := &encode{}
-	if err := encode.serialize(v); err != nil {
+	value := reflect.ValueOf(v)
+	if value.Kind() == reflect.Ptr {
+		value = value.Elem()
+	}
+	switch value.Kind() {
+	case reflect.Struct:
+		if err := encodeStruct(e.encode, value); err != nil {
+			return err
+		}
+	default:
+		if err := e.base(v); err != nil {
+			return err
+		}
+	}
+	return e.write()
+}
+
+func (e *Encoder) write() error {
+	v := uint32(e.encode.buf.len())
+	{
+		e.encode.scratch[0] = byte(v)
+		e.encode.scratch[1] = byte(v >> 8)
+		e.encode.scratch[2] = byte(v >> 16)
+		e.encode.scratch[3] = byte(v >> 24)
+	}
+	if _, err := e.out.Write(e.encode.scratch[:4]); err != nil {
 		return err
 	}
-	if _, err := encode.buf.WriteTo(e.out); err != nil {
-		return err
+	return e.encode.buf.writeTo(e.out)
+}
+
+func (e *Encoder) base(v interface{}) error {
+	switch value := v.(type) {
+	case uint8:
+		return e.encode.uint8(value)
+	case string:
+		return e.encode.string(value)
 	}
 	return nil
 }
 
 type encode struct {
-	buf interface {
-		io.Writer
-		io.WriterTo
-	}
+	buf     *buffer
 	scratch [binary.MaxVarintLen64]byte
-}
-
-func (enc *encode) serialize(v interface{}) error {
-	return nil
 }
 
 func (enc *encode) bool(v bool) error {

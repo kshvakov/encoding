@@ -16,7 +16,8 @@ func init() {
 
 type field struct {
 	name   string
-	encode func(enc *encode, v reflect.Value) error
+	encode encodeFunc
+	decode decodeFunc
 }
 
 func fields(v reflect.Type) []field {
@@ -38,7 +39,9 @@ func fields(v reflect.Type) []field {
 				continue
 			}
 			fields = append(fields, field{
-				name: name,
+				name:   name,
+				encode: getEncodeFunc(f.Type.Kind()),
+				decode: getDecodeFunc(f.Type.Kind()),
 			})
 		}
 		fieldsCache.mutex.Lock()
